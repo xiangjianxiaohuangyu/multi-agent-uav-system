@@ -89,6 +89,20 @@ class SceneParamsData:
         )
 
 
+def parse_scene_params_data(data: dict[str, Any]) -> SceneParamsData:
+    """解析场景参数数据并存储到全局数据存储。
+
+    Args:
+        data: 从 ns3 推送过来的场景参数字典
+
+    Returns:
+        解析后的 SceneParamsData 对象
+    """
+    scene_data = SceneParamsData.from_dict(data)
+    _data_store.add_scene_params_data(scene_data)
+    return scene_data
+
+
 class DataStore:
     """数据存储类，保存历史节点状态用于预测。"""
 
@@ -96,6 +110,7 @@ class DataStore:
         self.max_history = max_history
         self.node_history: dict[str, list[NodeInfo]] = defaultdict(list)
         self.task_history: list[SimulationData] = []
+        self.scene_params_history: list[SceneParamsData] = []
 
     def add_simulation_data(self, sim_data: SimulationData):
         """添加仿真数据到历史记录。"""
@@ -112,6 +127,12 @@ class DataStore:
         # print()
         # print(f"[DataStore] task_history: {self.task_history}", flush=True)
         # print()
+
+    def add_scene_params_data(self, scene_data: SceneParamsData):
+        """添加场景参数数据到历史记录。"""
+        self.scene_params_history.append(scene_data)
+        if len(self.scene_params_history) > self.max_history:
+            self.scene_params_history.pop(0)
 
 
 # 全局数据存储实例

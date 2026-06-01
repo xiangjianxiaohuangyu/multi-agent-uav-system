@@ -102,7 +102,9 @@ class LlmAgent:
         if tools:
             payload["tools"] = tools
 
+        # 发送请求到 Ollama API
         response = await self.client.post(url, json=payload)
+        # 检查 HTTP 状态码，非 2xx 会抛出异常
         response.raise_for_status()
         return response.json()
 
@@ -142,6 +144,7 @@ class LlmAgent:
             智能体的分析结果
         """
         data_description = self._format_simulation_data(sim_data)
+        print(f"[LLM format data Input]\n{data_description}", flush=True)
 
         messages = [
             {"role": "system", "content": self.system_prompt},
@@ -194,37 +197,3 @@ class LlmAgent:
             result["llm_analysis"] = f"LLM 分析失败: {str(e)}"
 
         return result
-
-
-class Agent:
-    """单个智能体，负责处理仿真数据（简单版本）。"""
-
-    def __init__(self, agent_id: str = "main_agent", name: str = "Main Agent"):
-        self.agent_id = agent_id
-        self.name = name
-
-    async def process(self, sim_data: SimulationData) -> dict[str, Any]:
-        """处理仿真数据。"""
-        return {
-            "agent_id": self.agent_id,
-            "processed": True,
-            "task_id": sim_data.task_id,
-            "simulation_time": sim_data.simulation_time,
-            "node_count": len(sim_data.nodes),
-            "nodes": [
-                {
-                    "id": n.id,
-                    "position": n.position,
-                    "velocity": n.velocity,
-                    "energy_percentage": n.energy_percentage,
-                    "hello_interval": n.hello_interval,
-                    "simulation_time": n.simulation_time,
-                    "weight_distance": n.weight_distance,
-                    "weight_link_time": n.weight_link_time,
-                    "weight_rel_velocity": n.weight_rel_velocity,
-                    "weight_neighbor_count": n.weight_neighbor_count,
-                    "multi_path_count": n.multi_path_count,
-                }
-                for n in sim_data.nodes
-            ],
-        }
