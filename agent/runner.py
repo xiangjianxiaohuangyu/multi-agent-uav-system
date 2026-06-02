@@ -5,12 +5,21 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from agent.agent import LlmAgent, LlmConfig
 from agent.data_parser import parse_by_type
 from agent.data_parser import SimulationData
 from agent.data_parser import parse_scene_params_data
+
+
+def _load_api_key() -> str:
+    """从 secrets/api_key.txt 读取 API key."""
+    secrets_path = Path(__file__).parent.parent / "secrets" / "api_key.txt"
+    if secrets_path.exists():
+        return secrets_path.read_text().strip()
+    raise FileNotFoundError(f"API key file not found: {secrets_path}")
 
 
 async def process_with_agent(
@@ -40,7 +49,7 @@ async def process_with_agent(
             "provider": "qwen",
             "model": "qwen3.6-flash",
             "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            "api_key": "sk-048bfae0242c43e283b6353b5291d2f0",
+            "api_key": _load_api_key(),
         }
         agent: LlmAgent = LlmAgent(
             agent_id="llm_agent",

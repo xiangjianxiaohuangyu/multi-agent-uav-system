@@ -44,5 +44,8 @@ data/
 # Learning path
 future.md
 
+# Secrets
+secrets/
+
 # Logs
 log/
