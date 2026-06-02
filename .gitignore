@@ -40,3 +40,9 @@ htmlcov/
 
 # Data
 data/
+
+# Learning path
+future.md
+
+# Logs
+log/

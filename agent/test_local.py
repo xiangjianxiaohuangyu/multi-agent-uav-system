@@ -15,6 +15,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+# 测试配置：控制使用多少个 JSON 文件，1 表示只使用第一个
+TEST_JSON_COUNT = 1
+
 # 数据存储目录
 DATA_DIR = Path(__file__).parent.parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
@@ -81,23 +84,39 @@ def list_task_ids() -> list[str]:
 
 
 async def run_local_test():
-    """本地测试入口，按顺序加载所有数据并执行处理流程。"""
+    """本地测试入口，根据 TEST_JSON_COUNT 加载数据并执行处理流程。"""
     from agent.runner import process_with_agent
 
     # 收集所有 JSON 文件
-    json_files = sorted(DATA_DIR.glob("**/ns3_data_*.json"))
-    json_files.extend(sorted(DATA_DIR.glob("**/scene_params_*.json")))
+    ns3_files = sorted(DATA_DIR.glob("**/ns3_data_*.json"))
+    scene_files = sorted(DATA_DIR.glob("**/scene_params_*.json"))
 
-    if not json_files:
+    if not ns3_files and not scene_files:
         print("[Test] No saved data found in data/", flush=True)
         print()
         print("[Test] Please run the server first to collect data", flush=True)
         print()
         return
 
-    for json_file in json_files:
+    # 先加载并处理 scene_params 数据（用于保存通信对信息到 DataStore）
+    if scene_files:
+        latest_scene_file = scene_files[-1]  # 使用最新的 scene_params 文件
+        print(f"[Test] Loading scene_params: {latest_scene_file}", flush=True)
+        scene_data = load_raw_data(str(latest_scene_file))
+        await process_with_agent(scene_data)
+        print()
+
+    # 根据 TEST_JSON_COUNT 确定要使用的 ns3 文件数量
+    ns3_count = min(len(ns3_files), TEST_JSON_COUNT)
+    files_to_use = ns3_files[:ns3_count]
+
+    print(f"[Test] Using {len(files_to_use)} JSON file(s) (TEST_JSON_COUNT={TEST_JSON_COUNT})", flush=True)
+
+    for json_file in files_to_use:
+        print(f"[Test] Loading: {json_file}", flush=True)
         data = load_raw_data(str(json_file))
         result = await process_with_agent(data)
+        print(f"[Test] Result: {result}", flush=True)
 
 
 if __name__ == "__main__":
