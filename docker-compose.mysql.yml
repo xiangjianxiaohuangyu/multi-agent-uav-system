@@ -1,0 +1,33 @@
+# 一键启动 MySQL 容器，自动建库 + 自动执行 db/ddl/*.sql
+#
+# 用法：
+#   docker compose -f docker-compose.mysql.yml up -d
+#   docker compose -f docker-compose.mysql.yml down -v   # 停止并清理数据卷
+#
+# 启动后可用以下命令验证：
+#   docker exec -it uav-mysql mysql -uroot -prootpw uav_simulation -e "DESCRIBE simulation_records;"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: uav-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpw
+      MYSQL_DATABASE: uav_simulation
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      # 数据持久化
+      - uav_mysql_data:/var/lib/mysql
+      # 首次启动自动执行建表脚本
+      - ./db/ddl:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootpw"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  uav_mysql_data:

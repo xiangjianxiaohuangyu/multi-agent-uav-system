@@ -1,0 +1,28 @@
+# 经验库默认配置
+# 运行时可通过环境变量覆盖：
+#   EXPERIENCE_DISABLED, EXPERIENCE_FAISS_DIR,
+#   EXPERIENCE_MAX_DELAY_MS, EXPERIENCE_MAX_ENERGY,
+#   EXPERIENCE_TOPK_DEFAULT, EXPERIENCE_TOPK_MAX, EXPERIENCE_LOG_LEVEL
+
+dimension: 11
+faiss_index_path: "./data/faiss/index.faiss"
+faiss_id_map_path: "./data/faiss/id_map.json"
+
+# Score 归一化上限（clamp [0,1] 风格）
+max_delay_ms: 1000.0
+max_energy: 100.0
+
+# Score 公式权重：score = w_pdr * pdr + w_delay * (1 - delay/max_delay) + w_energy * (1 - energy/max_energy)
+score_weights:
+  pdr: 0.5
+  delay: 0.3
+  energy: 0.2
+
+# Top-K 检索默认值与上限
+topk_default: 5
+topk_max: 50
+
+# 启动时是否自动 create_all() 兜底建表
+auto_create_table: true
+
+log_level: "INFO"

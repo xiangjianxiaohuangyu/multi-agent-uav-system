@@ -68,12 +68,12 @@ async def receive_simulation_data(request: Request) -> dict[str, Any]:
     # 保存原始数据用于本地测试
     save_raw_data(raw_payload)
 
-    # 调用智能体处理数据
-    agent_result = await process_with_agent(raw_payload)
-    _log("info", "agent_processed", agent_result)
+    # # 调用智能体处理数据
+    # agent_result = await process_with_agent(raw_payload)
+    # _log("info", "agent_processed", agent_result)
 
     # 模拟 Windows 端算法处理耗时（5秒物理时间）
-    await asyncio.sleep(5)
+    await asyncio.sleep(1)
 
     # 直接将决策结果或确认信息作为当前 HTTP 请求的 Response 返回
     return {

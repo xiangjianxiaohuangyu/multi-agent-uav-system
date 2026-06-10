@@ -5,35 +5,32 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-from agent.agent import LlmAgent, LlmConfig
+from agent.agent import LlmAgent
 from agent.data_parser import parse_by_type
 from agent.data_parser import SimulationData
 from agent.data_parser import parse_scene_params_data
-
-
-def _load_api_key() -> str:
-    """从 secrets/api_key.txt 读取 API key."""
-    secrets_path = Path(__file__).parent.parent / "secrets" / "api_key.txt"
-    if secrets_path.exists():
-        return secrets_path.read_text().strip()
-    raise FileNotFoundError(f"API key file not found: {secrets_path}")
+from agent.llm_providers import LlmProviderFactory, PresetName
 
 
 async def process_with_agent(
     data: dict[str, Any],
-    llm_config: LlmConfig | None = None,
+    preset: PresetName | None = None,
+    prior_experiences: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """处理仿真数据的主入口函数。
 
     Args:
         data: 从 ns3 推送过来的仿真数据字典
-        llm_config: LLM 配置，包含 provider、model、base_url 等
+        preset: 预设的 LLM 名称（如 "use_ollama_qwen3_4b"），None 时使用默认
+        prior_experiences: FAISS 经验库检索到的历史经验，会被注入到 LLM system prompt
 
     Returns:
         包含处理结果的字典
+
+    Raises:
+        ValueError: preset 名称不存在（不会回退到默认）
     """
     msg_type, parsed_data = parse_by_type(data)
     print(f"[Parser] type: {msg_type}", flush=True)
@@ -44,20 +41,22 @@ async def process_with_agent(
         return {"code": 0, "msg": "ok"}
     else:
         sim_data: SimulationData = parsed_data
-        # 默认使用 qwen provider
-        config = llm_config or {
-            "provider": "qwen",
-            "model": "qwen3.6-flash",
-            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            "api_key": _load_api_key(),
-        }
+
+        if preset:
+            # 显式指定了 preset → 查找，找不到就报错（不回退到默认）
+            config = LlmProviderFactory.get_preset(preset)
+        else:
+            # 未指定 → 使用默认预设
+            config = LlmProviderFactory.use_ollama_llama3_1_8b()
+            print("[Runner] 未指定 preset，使用默认: use_ollama_llama3_1_8b", flush=True)
+
         agent: LlmAgent = LlmAgent(
             agent_id="llm_agent",
             name="LLM Agent",
             llm_config=config,
         )
         try:
-            result = await agent.process(sim_data)
+            result = await agent.process(sim_data, prior_experiences=prior_experiences)
         finally:
             await agent.close()
         return result

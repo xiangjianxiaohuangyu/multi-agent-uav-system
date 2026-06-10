@@ -108,6 +108,47 @@ class LlmAgent:
         """关闭 provider 客户端。"""
         await self.provider.close()
 
+    def _format_prior_experiences(
+        self,
+        prior_experiences: list[dict[str, Any]] | None,
+    ) -> str:
+        """把 FAISS 检索到的历史经验格式化为可读的 system prompt 段落。
+
+        输入格式参考 ``ExperienceOut``：每条经验含 score / scene / parameter / result。
+        """
+        if not prior_experiences:
+            return ""
+
+        lines: list[str] = [
+            "",
+            "# Historical Experience (Top-K by score, scene-similarity)",
+            "对于与当前场景相似的历史仿真，以下参数在历史上获得了最高的 score。",
+            "请参考这些历史经验选择与当前场景最匹配的参数组合（score 越高越值得参考）。",
+            "",
+        ]
+        for i, exp in enumerate(prior_experiences, start=1):
+            score = exp.get("score", 0.0)
+            param = exp.get("parameter", {})
+            res = exp.get("result", {})
+            lines.append(
+                f"  #{i}  score={float(score):.3f}  "
+                f"pdr={float(res.get('e2e_pdr', 0)):.3f}  "
+                f"delay={float(res.get('e2e_delay', 0)):.1f}ms  "
+                f"energy={float(res.get('energy_consumption', 0)):.2f}"
+            )
+            lines.append(
+                f"      parameter = {json.dumps(param, ensure_ascii=False, sort_keys=True)}"
+            )
+        lines.append("")
+        return "\n".join(lines)
+
+    def _build_system_prompt(
+        self,
+        prior_experiences: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """构造完整的 system prompt（基础 + 历史经验段落）。"""
+        return self.system_prompt + self._format_prior_experiences(prior_experiences)
+
     def _execute_tool_call(self, tool_name: str, arguments: dict[str, Any], nodes: list[dict]) -> dict[str, Any]:
         """执行工具调用。
 
@@ -226,11 +267,16 @@ class LlmAgent:
             "source_nodes": node_info_list,
         }, indent=2)
 
-    async def think(self, sim_data: SimulationData) -> str:
+    async def think(
+        self,
+        sim_data: SimulationData,
+        prior_experiences: list[dict[str, Any]] | None = None,
+    ) -> str:
         """让智能体思考仿真数据并给出分析。
 
         Args:
             sim_data: 仿真数据
+            prior_experiences: FAISS 经验库检索到的历史经验（注入到 system prompt）
 
         Returns:
             智能体的分析结果
@@ -238,8 +284,9 @@ class LlmAgent:
         data_description = self._format_simulation_data(sim_data)
         print(f"[LLM format data Input]\n{data_description}", flush=True)
 
+        system_prompt = self._build_system_prompt(prior_experiences)
         messages = [
-            {"role": "system", "content": self.system_prompt},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"请分析以下仿真数据并提供优化建议：\n\n{data_description}"},
         ]
 
@@ -252,6 +299,7 @@ class LlmAgent:
         nodes: list[dict],
         source_node_ids: list[int] | None = None,
         max_iterations: int = 5,
+        prior_experiences: list[dict[str, Any]] | None = None,
     ) -> str:
         """让智能体循环思考仿真数据，支持工具调用反馈。
 
@@ -262,6 +310,7 @@ class LlmAgent:
             nodes: 节点列表，工具调用会直接修改对应节点的值
             source_node_ids: 源节点 ID 列表
             max_iterations: 最大迭代次数
+            prior_experiences: FAISS 经验库检索到的历史经验（注入到 system prompt）
 
         Returns:
             智能体的最终分析结果
@@ -271,9 +320,10 @@ class LlmAgent:
 
         # 提供所有工具
         available_tools = self.tools
+        system_prompt = self._build_system_prompt(prior_experiences)
 
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": self.system_prompt},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"请分析以下源节点仿真数据并优化路由参数：\n\n{data_description}"},
         ]
 
@@ -336,11 +386,16 @@ class LlmAgent:
 
         return final_response
 
-    async def process(self, sim_data: SimulationData) -> dict[str, Any]:
+    async def process(
+        self,
+        sim_data: SimulationData,
+        prior_experiences: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """处理仿真数据，使用 LLM 分析并返回结果。
 
         Args:
             sim_data: 仿真数据
+            prior_experiences: FAISS 经验库检索到的历史经验，会被注入到 LLM system prompt
 
         Returns:
             处理结果字典
@@ -390,7 +445,10 @@ class LlmAgent:
                 single_source_ids = [source_id]
                 print(f"[Process] 处理源节点: {source_id}", flush=True)
                 analysis = await self.think_with_loop(
-                    sim_data, result["nodes"], source_node_ids=single_source_ids
+                    sim_data,
+                    result["nodes"],
+                    source_node_ids=single_source_ids,
+                    prior_experiences=prior_experiences,
                 )
                 analysis_results[str(source_id)] = analysis
             result["llm_analysis"] = analysis_results

@@ -72,6 +72,127 @@ class CommunicationPair:
 
 
 @dataclass
+class RawNodeSnapshot:
+    """单条仿真回调的扁平化快照，对应 ``simulation_records`` 一行。
+
+    与 ``NodeInfo`` 的区别：
+    - ``NodeInfo`` 是 LLM agent 用的字段集（轻量、聚焦参数调优）
+    - ``RawNodeSnapshot`` 是持久化层用的字段集（完整、聚焦指标落库）
+
+    引入这个类是为了不破坏 ``NodeInfo`` 的下游消费者（agent.py / tool schemas）。
+    """
+
+    task_id: str = ""
+    device_id: str = ""
+    simulation_time: float = 0.0
+
+    # m_info
+    m_speed: float = 0.0
+    m_energy: float = 0.0
+    m_queue_length: int = 0
+    m_neighbor_count: int = 0
+    m_distance_to_destination: float = 0.0
+
+    # neighbor_info
+    nb_forward_candidate_ratio: float = 0.0
+    nb_distance_to_me_mean: float = 0.0
+    nb_distance_to_me_std: float = 0.0
+    nb_distance_to_destination_mean: float = 0.0
+    nb_distance_to_destination_std: float = 0.0
+    nb_distance_to_destination_min: float = 0.0
+    nb_relative_speed_mean: float = 0.0
+    nb_relative_speed_std: float = 0.0
+    nb_link_lifetime_mean: float = 0.0
+    nb_link_lifetime_std: float = 0.0
+    nb_neighbor_degree_mean: float = 0.0
+    nb_neighbor_degree_std: float = 0.0
+    nb_queue_length_mean: float = 0.0
+    nb_queue_length_std: float = 0.0
+    nb_queue_length_max: int = 0
+    nb_energy_mean: float = 0.0
+    nb_energy_std: float = 0.0
+    nb_energy_min: float = 0.0
+
+    # para_info
+    param_hello_interval: float = 0.0
+    param_path_num: int = 0
+    weight_distance: float = 0.0
+    weight_link_time: float = 0.0
+    weight_rel_velocity: float = 0.0
+    weight_neighbor_count: float = 0.0
+
+    # result_info
+    res_avg_pdr: float = 0.0
+    res_avg_delay: float = 0.0
+    res_energy_consumption: float = 0.0
+    res_control_packets: int = 0
+    res_distance_progress: float = 0.0
+
+    @classmethod
+    def from_payload(cls, payload: dict) -> "RawNodeSnapshot | None":
+        """从 callback payload 构造快照。``scene_params`` 回调返回 None。"""
+        if not isinstance(payload, dict) or payload.get("type") == "scene_params":
+            return None
+        nodes = payload.get("nodes") or []
+        node = nodes[0] if nodes and isinstance(nodes[0], dict) else {}
+        scene = node.get("scene_info") or {}
+        m = scene.get("m_info") or {}
+        nb = scene.get("neighbor_info") or {}
+        para = node.get("para_info") or {}
+        w = para.get("weights") or {}
+        res = node.get("result_info") or {}
+
+        raw_id = payload.get("node_identity", payload.get("node_id"))
+        return cls(
+            task_id=str(payload.get("task_id") or ""),
+            device_id=str(raw_id) if raw_id is not None else "",
+            simulation_time=float(payload.get("simulation_time") or 0.0),
+            m_speed=float(m.get("speed") or 0.0),
+            m_energy=float(m.get("energy") or 0.0),
+            m_queue_length=int(m.get("queue_length") or 0),
+            m_neighbor_count=int(m.get("neighbor_count") or 0),
+            m_distance_to_destination=float(m.get("distance_to_destination") or 0.0),
+            nb_forward_candidate_ratio=float(nb.get("forward_candidate_ratio") or 0.0),
+            nb_distance_to_me_mean=float(nb.get("distance_to_me_mean") or 0.0),
+            nb_distance_to_me_std=float(nb.get("distance_to_me_std") or 0.0),
+            nb_distance_to_destination_mean=float(nb.get("distance_to_destination_mean") or 0.0),
+            nb_distance_to_destination_std=float(nb.get("distance_to_destination_std") or 0.0),
+            nb_distance_to_destination_min=float(nb.get("distance_to_destination_min") or 0.0),
+            nb_relative_speed_mean=float(nb.get("relative_speed_mean") or 0.0),
+            nb_relative_speed_std=float(nb.get("relative_speed_std") or 0.0),
+            nb_link_lifetime_mean=float(nb.get("link_lifetime_mean") or 0.0),
+            nb_link_lifetime_std=float(nb.get("link_lifetime_std") or 0.0),
+            nb_neighbor_degree_mean=float(nb.get("neighbor_degree_mean") or 0.0),
+            nb_neighbor_degree_std=float(nb.get("neighbor_degree_std") or 0.0),
+            nb_queue_length_mean=float(nb.get("queue_length_mean") or 0.0),
+            nb_queue_length_std=float(nb.get("queue_length_std") or 0.0),
+            nb_queue_length_max=int(nb.get("queue_length_max") or 0),
+            nb_energy_mean=float(nb.get("energy_mean") or 0.0),
+            nb_energy_std=float(nb.get("energy_std") or 0.0),
+            nb_energy_min=float(nb.get("energy_min") or 0.0),
+            param_hello_interval=float(para.get("hello_interval") or 0.0),
+            param_path_num=int(para.get("path_num") or 0),
+            weight_distance=float(
+                w.get("w_distance", w.get("distance")) or 0.0
+            ),
+            weight_link_time=float(
+                w.get("w_linkTime", w.get("linkTime")) or 0.0
+            ),
+            weight_rel_velocity=float(
+                w.get("w_relVelocity", w.get("relVelocity")) or 0.0
+            ),
+            weight_neighbor_count=float(
+                w.get("w_neighborCount", w.get("neighborCount")) or 0.0
+            ),
+            res_avg_pdr=float(res.get("avg_pdr") or 0.0),
+            res_avg_delay=float(res.get("avg_delay") or 0.0),
+            res_energy_consumption=float(res.get("energy_consumption") or 0.0),
+            res_control_packets=int(res.get("control_packets") or 0),
+            res_distance_progress=float(res.get("distance_progress") or 0.0),
+        )
+
+
+@dataclass
 class SceneParamsData:
     """场景参数数据。"""
     task_id: str

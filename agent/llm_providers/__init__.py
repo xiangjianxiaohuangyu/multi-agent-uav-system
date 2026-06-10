@@ -6,7 +6,7 @@
 """
 
 from agent.llm_providers.base import LlmProvider
-from agent.llm_providers.factory import LlmProviderFactory
+from agent.llm_providers.factory import LlmProviderFactory, PresetName
 from agent.llm_providers.ollama import OllamaProvider
 from agent.llm_providers.qwen import QwenProvider
 
@@ -15,4 +15,5 @@ __all__ = [
     "OllamaProvider",
     "QwenProvider",
     "LlmProviderFactory",
+    "PresetName",
 ]
