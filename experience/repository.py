@@ -4,7 +4,8 @@
 - 所有公开方法**永不抛出异常**；失败仅 ``log.warning``/``log.exception``，
   返回 ``None`` / ``False`` / ``[]``。
 - 双写顺序：MySQL 先提交，FAISS 失败时 MySQL 行补偿删除。
-- 读路径：FAISS 返 id → MySQL ``SELECT ... WHERE id IN (...)`` → 按 score DESC 排序。
+- 读路径：FAISS 返 ``(distance, id)`` → MySQL ``SELECT ... WHERE id IN (...)``
+  → 按 **L2 距离 ASC** 排序（最相似的优先）。
 """
 
 from __future__ import annotations
@@ -22,7 +23,6 @@ from experience.config import ExperienceConfig
 from experience.engine import get_config, get_faiss_manager
 from experience.models import Experience
 from experience.scoring import (
-    compute_score,
     payload_to_experience,
     scene_to_vector,
 )
@@ -46,14 +46,14 @@ class ExperienceRepository:
             self._config = get_config()
         return self._config
 
-    def _row_to_dict(self, row: Experience) -> dict[str, Any]:
+    def _row_to_dict(self, row: Experience, distance: float | None = None) -> dict[str, Any]:
         return {
             "experience_id": int(row.experience_id),
             "scene": dict(row.scene_json) if row.scene_json else {},
             "scene_vector": list(row.scene_vector) if row.scene_vector else [],
             "parameter": dict(row.parameter_json) if row.parameter_json else {},
             "result": dict(row.result_json) if row.result_json else {},
-            "score": float(row.score) if row.score is not None else 0.0,
+            "distance": float(distance) if distance is not None else None,
             "created_time": row.created_time.isoformat() if row.created_time else None,
         }
 
@@ -74,16 +74,6 @@ class ExperienceRepository:
             return None
 
         vector = scene_to_vector(scene)
-        try:
-            score = compute_score(
-                pdr=float(result.get("e2e_pdr", 0.0)),
-                delay_ms=float(result.get("e2e_delay", 0.0)),
-                energy=float(result.get("energy_consumption", 0.0)),
-                cfg=cfg,
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning("compute_score failed: %s; falling back to 0.0", exc)
-            score = 0.0
 
         # 1) MySQL 写入
         row = Experience(
@@ -91,7 +81,6 @@ class ExperienceRepository:
             scene_vector=vector,
             parameter_json=parameter,
             result_json=result,
-            score=float(score),
         )
         eid: int | None = None
         try:
@@ -171,15 +160,6 @@ class ExperienceRepository:
             return False
 
         vector = scene_to_vector(scene)
-        try:
-            score = compute_score(
-                pdr=float(result.get("e2e_pdr", 0.0)),
-                delay_ms=float(result.get("e2e_delay", 0.0)),
-                energy=float(result.get("energy_consumption", 0.0)),
-                cfg=cfg,
-            )
-        except Exception:
-            score = 0.0
 
         try:
             with get_session() as s:
@@ -190,7 +170,6 @@ class ExperienceRepository:
                 row.scene_vector = vector
                 row.parameter_json = parameter
                 row.result_json = result
-                row.score = float(score)
                 s.commit()
         except Exception as exc:  # noqa: BLE001
             log.exception("mysql update experience %s failed: %s", experience_id, exc)
@@ -223,9 +202,9 @@ class ExperienceRepository:
         scene: dict[str, Any],
         k: int = 5,
     ) -> list[dict[str, Any]]:
-        """根据场景相似度检索 Top-K 经验，按 score DESC 排序。
+        """根据场景相似度检索 Top-K 经验，按 L2 距离 ASC 排序。
 
-        流程：Scene → Vector → FAISS TopK → MySQL 批量取完整记录 → 按 score 排序。
+        流程：Scene → Vector → FAISS TopK → MySQL 批量取完整记录 → 按距离排序。
         """
         cfg = self._cfg()
         if cfg.is_disabled():
@@ -245,10 +224,17 @@ class ExperienceRepository:
         if ids.size == 0:
             return []
 
-        # 2) MySQL 批量取
-        id_list = [int(i) for i in ids.tolist() if int(i) >= 0]
-        if not id_list:
+        # 2) 建立 id → distance 映射（FAISS 顺序即为距离升序）
+        id_dist: dict[int, float] = {}
+        for d, i in zip(distances.tolist(), ids.tolist()):
+            eid = int(i)
+            if eid >= 0:
+                id_dist[eid] = float(d)
+        if not id_dist:
             return []
+
+        # 3) MySQL 批量取
+        id_list = list(id_dist.keys())
         try:
             with get_session() as s:
                 stmt = select(Experience).where(Experience.experience_id.in_(id_list))
@@ -257,25 +243,25 @@ class ExperienceRepository:
             log.exception("mysql bulk read for search failed: %s", exc)
             return []
 
-        # 3) 按 score DESC 排序
-        hits = [self._row_to_dict(r) for r in rows]
-        hits.sort(key=lambda h: h.get("score", 0.0), reverse=True)
+        # 4) 附带 distance，按距离 ASC 排序
+        hits = [self._row_to_dict(r, distance=id_dist.get(int(r.experience_id))) for r in rows]
+        hits.sort(key=lambda h: (h.get("distance") is None, h.get("distance", 0.0)))
         return hits
 
     def list_paginated(
         self,
         offset: int = 0,
         limit: int = 100,
-        min_score: float | None = None,
     ) -> list[dict[str, Any]]:
-        """分页列出经验。"""
+        """分页列出经验（按 id DESC）。"""
         try:
             with get_session() as s:
-                stmt = select(Experience)
-                if min_score is not None:
-                    stmt = stmt.where(Experience.score >= float(min_score))
-                stmt = stmt.order_by(Experience.experience_id.desc())
-                stmt = stmt.offset(max(0, int(offset))).limit(max(1, int(limit)))
+                stmt = (
+                    select(Experience)
+                    .order_by(Experience.experience_id.desc())
+                    .offset(max(0, int(offset)))
+                    .limit(max(1, int(limit)))
+                )
                 rows = s.execute(stmt).scalars().all()
                 return [self._row_to_dict(r) for r in rows]
         except Exception as exc:  # noqa: BLE001
@@ -306,6 +292,52 @@ class ExperienceRepository:
         except Exception as exc:  # noqa: BLE001
             log.warning("ensure_table failed: %s", exc)
             return False
+
+    # ------------------------------------------------------------------ #
+    # MySQL → FAISS 重建（迁移 / 修复入口）
+    # ------------------------------------------------------------------ #
+
+    def rebuild_from_mysql(self, page_size: int = 1000) -> int:
+        """从 MySQL ``experiences`` 表拉取所有 ``scene_vector`` 并重建 FAISS 索引。
+
+        维度不匹配的行（迁移期遗留的旧 11 维数据）会被静默丢弃并记录数量。
+        返回成功回灌的记录数。
+        """
+        cfg = self._cfg()
+        if cfg.is_disabled():
+            return 0
+        dim = int(cfg.dimension)
+        rows: list[tuple[int, list[float]]] = []
+        offset = 0
+        try:
+            with get_session() as s:
+                stmt = select(Experience.experience_id, Experience.scene_vector)
+                while True:
+                    chunk = s.execute(stmt.offset(offset).limit(page_size)).all()
+                    if not chunk:
+                        break
+                    for eid, vec in chunk:
+                        if vec and len(vec) == dim:
+                            rows.append((int(eid), [float(x) for x in vec]))
+                    if len(chunk) < page_size:
+                        break
+                    offset += page_size
+        except Exception as exc:  # noqa: BLE001
+            log.exception("rebuild_from_mysql: select failed: %s", exc)
+            return 0
+
+        if not rows:
+            log.info("rebuild_from_mysql: no rows to restore (mysql is empty or all dim-mismatched)")
+            return 0
+
+        try:
+            mgr = get_faiss_manager()
+            mgr.rebuild_from(dict(rows))
+        except Exception as exc:  # noqa: BLE001
+            log.exception("rebuild_from_mysql: faiss rebuild failed: %s", exc)
+            return 0
+        log.info("rebuild_from_mysql: restored %d rows", len(rows))
+        return len(rows)
 
     # ------------------------------------------------------------------ #
     # Payload 便捷入口（被 main.py 调用）

@@ -6,10 +6,7 @@
 CREATE TABLE IF NOT EXISTS simulation_records (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
 
-    -- 标识 + 时间
-    task_id        VARCHAR(64)  NOT NULL COMMENT 'ns-3 任务 ID',
-    device_id      VARCHAR(64)  NOT NULL COMMENT '设备/节点ID (来自 node_identity，回退 node_id)',
-    simulation_time DECIMAL(12,3) NOT NULL COMMENT '仿真时间（ns-3 sim seconds，非 wall-clock）',
+    -- 时间
     created_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '落库时间（wall-clock）',
 
     -- m_info 自身状态
@@ -51,13 +48,9 @@ CREATE TABLE IF NOT EXISTS simulation_records (
     -- result_info 实验结果
     res_avg_pdr DECIMAL(5,4) NOT NULL,
     res_avg_delay DECIMAL(8,2) NOT NULL,
-    res_energy_consumption DECIMAL(8,2) NOT NULL,
-    res_control_packets INT NOT NULL,
-    res_distance_progress DECIMAL(10,2) NOT NULL,
 
     -- 索引
-    KEY idx_device_time (device_id, created_at) COMMENT '设备 + 落库时间 趋势分析',
     KEY idx_param_combo (param_hello_interval, param_path_num) COMMENT '参数调优查询',
-    KEY idx_task_time (task_id, simulation_time) COMMENT '任务 + 仿真时间 切片'
+    KEY idx_created_at (created_at) COMMENT '落库时间索引'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='仿真场景参数与结果固定维度表';

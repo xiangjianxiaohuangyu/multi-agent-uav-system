@@ -12,12 +12,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 # ---------------------------------------------------------------------- #
-# 11 维场景特征
+# 23 维场景特征
 # ---------------------------------------------------------------------- #
 
 
 class SceneFeature(BaseModel):
-    """11 维定长场景特征向量。"""
+    """23 维定长场景特征向量。
+
+    字段顺序与 ``SCENE_FIELD_ORDER`` 严格一致；
+    任何额外字段都会被 Pydantic v2 的 ``extra="forbid"`` 拒绝。
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -27,15 +31,27 @@ class SceneFeature(BaseModel):
     neighbor_count: int | float = 0
     distance_to_destination: float
     forward_candidate_ratio: float
-    avg_neighbor_distance: float
+    distance_to_me_mean: float
+    distance_to_me_std: float
+    distance_to_destination_mean: float
+    distance_to_destination_std: float
+    distance_to_destination_min: float
     relative_speed_mean: float
-    link_stability: float
+    relative_speed_std: float
     link_lifetime_mean: float
-    traffic_load: float
+    link_lifetime_std: float
+    neighbor_degree_mean: float
+    neighbor_degree_std: float
+    queue_length_mean: float
+    queue_length_std: float
+    queue_length_max: int | float = 0
+    energy_mean: float
+    energy_std: float
+    energy_min: float
 
 
 # ---------------------------------------------------------------------- #
-# 6 字段参数
+# 6 字段参数（键名严格对齐 NS3 扁平 payload）
 # ---------------------------------------------------------------------- #
 
 
@@ -45,27 +61,25 @@ class Parameter(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     hello_interval: float = Field(ge=0)
-    candidate_num: int = Field(ge=0)
+    path_num: int = Field(ge=0)
     w_distance: float = Field(ge=0, le=1)
-    w_linktime: float = Field(ge=0, le=1)
-    w_energy: float = Field(ge=0, le=1)
-    w_queue: float = Field(ge=0, le=1)
+    w_linkTime: float = Field(ge=0, le=1)
+    w_relVelocity: float = Field(ge=0, le=1)
+    w_neighborCount: float = Field(ge=0, le=1)
 
 
 # ---------------------------------------------------------------------- #
-# 4 字段结果
+# 2 字段结果（键名严格对齐 NS3 扁平 payload）
 # ---------------------------------------------------------------------- #
 
 
 class Result(BaseModel):
-    """性能结果（4 字段）。"""
+    """性能结果（2 字段）。"""
 
     model_config = ConfigDict(extra="forbid")
 
-    e2e_pdr: float = Field(ge=0, le=1)
-    e2e_delay: float = Field(ge=0)
-    routing_overhead: float = Field(ge=0)
-    energy_consumption: float = Field(ge=0)
+    avg_pdr: float = Field(ge=0, le=1)
+    avg_delay: float = Field(ge=0)
 
 
 # ---------------------------------------------------------------------- #
@@ -85,7 +99,6 @@ class AddExperienceRequest(BaseModel):
 
 class AddExperienceResponse(BaseModel):
     experience_id: int
-    score: float
 
 
 class SearchExperienceRequest(BaseModel):
@@ -105,7 +118,7 @@ class ExperienceOut(BaseModel):
     scene_vector: list[float]
     parameter: dict[str, Any]
     result: dict[str, Any]
-    score: float
+    distance: float | None = None
     created_time: datetime | None = None
 
 
@@ -127,8 +140,5 @@ class ParameterBucket(BaseModel):
 
 class StatisticsResponse(BaseModel):
     count: int
-    avg_pdr: float | None
-    avg_delay: float | None
-    avg_score: float | None
     parameter_distribution: dict[str, dict[str, int]]
     scene_distribution: dict[str, dict[str, int]]

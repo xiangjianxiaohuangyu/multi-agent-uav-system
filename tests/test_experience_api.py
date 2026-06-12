@@ -102,11 +102,23 @@ def _full_payload() -> dict[str, Any]:
             "neighbor_count": 4,
             "distance_to_destination": 120.0,
             "forward_candidate_ratio": 0.6,
-            "avg_neighbor_distance": 50.0,
+            "distance_to_me_mean": 50.0,
+            "distance_to_me_std": 5.0,
+            "distance_to_destination_mean": 100.0,
+            "distance_to_destination_std": 12.0,
+            "distance_to_destination_min": 60.0,
             "relative_speed_mean": 1.2,
-            "link_stability": 0.9,
+            "relative_speed_std": 0.3,
             "link_lifetime_mean": 30.0,
-            "traffic_load": 0.3,
+            "link_lifetime_std": 4.0,
+            "neighbor_degree_mean": 4.5,
+            "neighbor_degree_std": 1.0,
+            "queue_length_mean": 2.0,
+            "queue_length_std": 0.5,
+            "queue_length_max": 4,
+            "energy_mean": 75.0,
+            "energy_std": 5.0,
+            "energy_min": 60.0,
         },
         "parameter": {
             "hello_interval": 1.0,
@@ -120,7 +132,6 @@ def _full_payload() -> dict[str, Any]:
             "e2e_pdr": 0.92,
             "e2e_delay": 150.0,
             "routing_overhead": 12.0,
-            "energy_consumption": 8.5,
         },
     }
 
@@ -131,13 +142,12 @@ def _full_payload() -> dict[str, Any]:
 
 
 class TestAdd:
-    def test_add_returns_id_and_score(self, client: TestClient) -> None:
+    def test_add_returns_id(self, client: TestClient) -> None:
         r = client.post("/experience/add", json=_full_payload())
         assert r.status_code == 200, r.text
         body = r.json()
         assert "experience_id" in body
         assert body["experience_id"] > 0
-        assert 0.0 <= body["score"] <= 1.0
 
     def test_add_rejects_missing_scene(self, client: TestClient) -> None:
         payload = _full_payload()
@@ -177,7 +187,7 @@ class TestGet:
         assert r2.status_code == 200
         body = r2.json()
         assert body["experience_id"] == eid
-        assert len(body["scene_vector"]) == 11
+        assert len(body["scene_vector"]) == 23
         assert "hello_interval" in body["parameter"]
         assert "e2e_pdr" in body["result"]
 
@@ -216,7 +226,7 @@ class TestDelete:
 
 
 class TestSearch:
-    def test_search_returns_sorted_by_score(self, client: TestClient) -> None:
+    def test_search_returns_sorted_by_distance(self, client: TestClient) -> None:
         for i in range(3):
             p = _full_payload()
             p["scene"]["speed"] = 3.0 + i
@@ -231,8 +241,8 @@ class TestSearch:
         body = r.json()
         assert "hits" in body
         assert len(body["hits"]) == 2
-        scores = [h["score"] for h in body["hits"]]
-        assert scores == sorted(scores, reverse=True)
+        distances = [h["distance"] for h in body["hits"]]
+        assert distances == sorted(distances)
 
     def test_search_empty_index_returns_empty(self, client: TestClient) -> None:
         r = client.post(
@@ -290,9 +300,6 @@ class TestDisabled:
             dimension=cfg.dimension,
             faiss_index_path=cfg.faiss_index_path,
             faiss_id_map_path=cfg.faiss_id_map_path,
-            max_delay_ms=cfg.max_delay_ms,
-            max_energy=cfg.max_energy,
-            score_weights=cfg.score_weights,
             topk_default=cfg.topk_default,
             topk_max=cfg.topk_max,
             disabled=True,

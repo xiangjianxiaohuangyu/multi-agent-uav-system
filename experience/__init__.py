@@ -3,7 +3,7 @@
 公共 re-export（与 ``db/__init__.py`` 对齐）。
 """
 
-from experience.config import ExperienceConfig, ScoreWeights, is_experience_disabled
+from experience.config import ExperienceConfig, is_experience_disabled
 from experience.engine import (
     get_config,
     get_faiss_manager,
@@ -19,7 +19,6 @@ from experience.scoring import (
     RESULT_FIELDS,
     SCENE_DIMENSION,
     SCENE_FIELD_ORDER,
-    compute_score,
     payload_to_experience,
     scene_to_vector,
 )
@@ -27,7 +26,6 @@ from experience.scoring import (
 __all__ = [
     # 配置
     "ExperienceConfig",
-    "ScoreWeights",
     "is_experience_disabled",
     # ORM
     "Experience",
@@ -46,7 +44,6 @@ __all__ = [
     "SCENE_DIMENSION",
     "PARAM_FIELDS",
     "RESULT_FIELDS",
-    "compute_score",
     "scene_to_vector",
     "payload_to_experience",
 ]

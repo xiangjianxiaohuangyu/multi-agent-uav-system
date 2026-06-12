@@ -15,7 +15,6 @@ from sqlalchemy import (
     DateTime,
     Index,
     Integer,
-    String,
     func,
 )
 from sqlalchemy.dialects.mysql import BIGINT
@@ -37,10 +36,7 @@ class SimulationRecord(Base):
         autoincrement=True,
     )
 
-    # 标识 + 时间
-    task_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
-    device_id: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
-    simulation_time: Mapped[Decimal] = mapped_column(DECIMAL(12, 3), nullable=False, default=Decimal("0"))
+    # 时间
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.current_timestamp()
     )
@@ -134,18 +130,10 @@ class SimulationRecord(Base):
     res_avg_delay: Mapped[Decimal] = mapped_column(
         DECIMAL(8, 2), nullable=False, default=Decimal("0")
     )
-    res_energy_consumption: Mapped[Decimal] = mapped_column(
-        DECIMAL(8, 2), nullable=False, default=Decimal("0")
-    )
-    res_control_packets: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    res_distance_progress: Mapped[Decimal] = mapped_column(
-        DECIMAL(10, 2), nullable=False, default=Decimal("0")
-    )
 
     __table_args__ = (
-        Index("idx_device_time", "device_id", "created_at"),
         Index("idx_param_combo", "param_hello_interval", "param_path_num"),
-        Index("idx_task_time", "task_id", "simulation_time"),
+        Index("idx_created_at", "created_at"),
         {
             "mysql_engine": "InnoDB",
             "mysql_charset": "utf8mb4",
@@ -154,7 +142,4 @@ class SimulationRecord(Base):
     )
 
     def __repr__(self) -> str:  # pragma: no cover
-        return (
-            f"<SimulationRecord id={self.id} task_id={self.task_id!r} "
-            f"device_id={self.device_id!r} sim_time={self.simulation_time}>"
-        )
+        return f"<SimulationRecord id={self.id}>"

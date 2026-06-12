@@ -2,9 +2,11 @@
 
 封装 ``IndexIDMap2(IndexFlatL2)`` + ``id_map.json`` 重建缓冲：
 
-- ``index.faiss`` — FAISS 二进制，主搜索路径
-- ``id_map.json`` — ``{str(experience_id): [11 floats]}``，用于索引损坏时从
-  MySQL/JSON 重建 FAISS（FAISS 内部虽然存了向量，但没有事务日志）
+- ``index.faiss`` — FAISS 二进制，存储**原始**向量，主搜索路径
+- ``id_map.json`` — ``{str(experience_id): [dim floats]}``，**原始**向量，用于索引
+  损坏 / dim 变化时从 MySQL 重建 FAISS（FAISS 内部虽然存了向量，但没有事务日志）
+
+不采用冷启动：所有 add 立即生效，使用原始 dim-dim 向量直接做 L2 检索。
 """
 
 from __future__ import annotations
@@ -24,9 +26,9 @@ log = logging.getLogger(__name__)
 class FaissIndexManager:
     """线程安全的 FAISS 索引包装器。
 
-    所有变更操作（add / delete / update / rebuild）都在 ``_lock`` 内串行执行，
-    避免并发写盘导致文件损坏。FAISS 搜索自身是线程安全的，但为了日志一致性
-    我们把 search 也放进锁里（11 维小数据集，开销可忽略）。
+    所有变更操作（add / delete / update / rebuild）都在 ``_lock`` 内
+    串行执行，避免并发写盘导致文件损坏。FAISS 搜索自身是线程安全的，但为了
+    日志一致性我们把 search 也放进锁里（小数据集，开销可忽略）。
     """
 
     def __init__(
@@ -41,8 +43,10 @@ class FaissIndexManager:
         self.index_path: Path = Path(index_path)
         self.id_map_path: Path = Path(id_map_path)
         self._index: faiss.IndexIDMap2 | None = None
-        self._id_to_vec: dict[int, list[float]] = {}
-        self._lock = threading.Lock()
+        self._id_to_vec: dict[int, list[float]] = {}  # RAW dim-dim
+        # RLock：允许 ``ntotal`` 等 property 在持锁状态下被调用
+        # （如 ``load_or_create`` 末尾的 ``self.ntotal``）。
+        self._lock = threading.RLock()
 
     # ------------------------------------------------------------------ #
     # 生命周期
@@ -52,6 +56,7 @@ class FaissIndexManager:
         """启动时调用：恢复索引；必要时从 id_map 重建。"""
         with self._lock:
             self.index_path.parent.mkdir(parents=True, exist_ok=True)
+
             if self.index_path.is_file():
                 try:
                     self._index = faiss.read_index(str(self.index_path))
@@ -65,19 +70,23 @@ class FaissIndexManager:
                     log.warning("failed to read faiss index %s: %s", self.index_path, exc)
                     self._index = None
 
-            # 加载或重建 id_map
             if self.id_map_path.is_file():
                 try:
                     with self.id_map_path.open("r", encoding="utf-8") as f:
                         raw = json.load(f)
-                    self._id_to_vec = {int(k): list(v) for k, v in raw.items()}
+                    # 维度过滤：只保留匹配当前 dim 的（应对历史 dim 变化）
+                    self._id_to_vec = {
+                        int(k): list(v)
+                        for k, v in raw.items()
+                        if isinstance(v, (list, tuple)) and len(v) == self.dimension
+                    }
                 except Exception as exc:  # noqa: BLE001
                     log.warning("failed to read id_map %s: %s", self.id_map_path, exc)
                     self._id_to_vec = {}
             else:
                 self._id_to_vec = {}
 
-            # 三种恢复策略
+            # 恢复策略
             if self._index is None and self._id_to_vec:
                 log.info("faiss index missing, rebuilding from id_map (n=%d)", len(self._id_to_vec))
                 self._rebuild_locked()
@@ -86,7 +95,6 @@ class FaissIndexManager:
                 self._index = self._new_index()
                 self._save_locked()
             else:
-                # 索引已加载；尝试校验与 id_map 一致性
                 if self._index.ntotal != len(self._id_to_vec):
                     log.warning(
                         "faiss ntotal=%d != id_map size=%d; rebuilding from id_map",
@@ -94,10 +102,13 @@ class FaissIndexManager:
                     )
                     self._rebuild_locked()
                     self._save_locked()
-            log.info("faiss index ready (ntotal=%d, dim=%d)", self.ntotal, self.dimension)
+            log.info(
+                "faiss index ready (ntotal=%d, dim=%d)",
+                self.ntotal, self.dimension,
+            )
 
     def save(self) -> None:
-        """把索引和 id_map 写盘。"""
+        """把索引、id_map 写盘。"""
         with self._lock:
             self._save_locked()
 
@@ -136,21 +147,27 @@ class FaissIndexManager:
             return int(self._index.ntotal) if self._index is not None else 0
 
     def add_vector(self, vec_id: int, vector: np.ndarray) -> None:
-        """添加一个向量。
+        """添加一个向量（输入为**原始**向量）。
 
         Raises:
             ValueError: ``vec_id`` 已存在。
             RuntimeError: 索引未初始化。
         """
-        vec = self._as_vector(vector)
+        raw = self._as_vector(vector)
         with self._lock:
             if self._index is None:
                 self._index = self._new_index()
             if vec_id in self._id_to_vec:
                 raise ValueError(f"vec_id {vec_id} already exists; use update_vector")
+
+            raw_flat = raw.flatten().tolist()
+            self._id_to_vec[vec_id] = raw_flat
+
             ids = np.asarray([vec_id], dtype=np.int64)
-            self._index.add_with_ids(vec, ids)
-            self._id_to_vec[vec_id] = vec.flatten().tolist()
+            self._index.add_with_ids(
+                np.asarray([raw_flat], dtype=np.float32), ids
+            )
+
             self._save_locked()
 
     def delete_vector(self, vec_id: int) -> bool:
@@ -168,8 +185,8 @@ class FaissIndexManager:
             return True
 
     def update_vector(self, vec_id: int, vector: np.ndarray) -> bool:
-        """更新一个向量：先删再加。返回是否更新成功。"""
-        vec = self._as_vector(vector)
+        """更新一个向量：先删再加。返回是否更新成功。输入为原始向量。"""
+        raw = self._as_vector(vector)
         with self._lock:
             if self._index is None or vec_id not in self._id_to_vec:
                 return False
@@ -178,27 +195,30 @@ class FaissIndexManager:
                 self._index.remove_ids(ids)
             except Exception as exc:  # noqa: BLE001
                 log.warning("faiss remove_ids(%s) during update failed: %s", vec_id, exc)
-            self._index.add_with_ids(vec, ids)
-            self._id_to_vec[vec_id] = vec.flatten().tolist()
+            raw_flat = raw.flatten().tolist()
+            self._id_to_vec[vec_id] = raw_flat
+            self._index.add_with_ids(
+                np.asarray([raw_flat], dtype=np.float32), ids
+            )
             self._save_locked()
             return True
 
     def search_topk(
         self, query: np.ndarray, k: int
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Top-K L2 搜索。
+        """Top-K L2 搜索。输入为原始向量。
 
         Returns:
             ``(distances, ids)`` 两个 ``np.ndarray``（长度 ``min(k, ntotal)``）。
             空索引时返回 ``(np.array([]), np.array([]))``。
         """
-        q = self._as_vector(query)
+        raw = self._as_vector(query)
         with self._lock:
             if self._index is None or self._index.ntotal == 0:
                 empty = np.empty((0,), dtype=np.float32)
                 return empty.copy(), empty.astype(np.int64).copy()
             kk = max(1, min(int(k), int(self._index.ntotal)))
-            distances, ids = self._index.search(q, kk)
+            distances, ids = self._index.search(raw.astype(np.float32, copy=False), kk)
             return distances[0], ids[0]
 
     # ------------------------------------------------------------------ #
@@ -206,9 +226,24 @@ class FaissIndexManager:
     # ------------------------------------------------------------------ #
 
     def rebuild_from(self, id_to_vector: dict[int, list[float]]) -> None:
-        """从 id → vector 字典重建整个索引（用于从 MySQL 全量回灌）。"""
+        """从 id → **原始** vector 字典重建整个索引（用于从 MySQL 全量回灌）。
+
+        维度不匹配的条目会被静默丢弃并在日志中记录数量。
+        """
         with self._lock:
-            self._id_to_vec = {int(k): list(v) for k, v in id_to_vector.items()}
+            kept: dict[int, list[float]] = {}
+            skipped = 0
+            for k, v in id_to_vector.items():
+                if isinstance(v, (list, tuple)) and len(v) == self.dimension:
+                    kept[int(k)] = [float(x) for x in v]
+                else:
+                    skipped += 1
+            if skipped:
+                log.warning(
+                    "rebuild_from: skipped %d entries with dim != %d",
+                    skipped, self.dimension,
+                )
+            self._id_to_vec = kept
             self._rebuild_locked()
             self._save_locked()
 
@@ -217,13 +252,12 @@ class FaissIndexManager:
         if not self._id_to_vec:
             return
         ids_arr = np.array(sorted(self._id_to_vec.keys()), dtype=np.int64)
-        vecs = np.array(
+        raw = np.array(
             [self._id_to_vec[i] for i in ids_arr.tolist()],
             dtype=np.float32,
         )
-        if vecs.ndim == 1:
-            vecs = vecs.reshape(-1, self.dimension)
-        self._index.add_with_ids(vecs, ids_arr)
+        raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
+        self._index.add_with_ids(raw, ids_arr)
 
     # ------------------------------------------------------------------ #
     # 工具

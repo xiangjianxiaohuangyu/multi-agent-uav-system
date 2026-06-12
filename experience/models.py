@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Index, func
+from sqlalchemy import DateTime, Index, func
 from sqlalchemy.dialects.mysql import BIGINT, JSON as MySQLJSON
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -32,13 +32,11 @@ class Experience(Base):
     scene_vector: Mapped[list] = mapped_column(MySQLJSON, nullable=False)
     parameter_json: Mapped[dict] = mapped_column(MySQLJSON, nullable=False)
     result_json: Mapped[dict] = mapped_column(MySQLJSON, nullable=False)
-    score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     created_time: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.current_timestamp()
     )
 
     __table_args__ = (
-        Index("idx_score_desc", "score"),
         Index("idx_created_desc", "created_time"),
         {
             "mysql_engine": "InnoDB",
@@ -49,6 +47,6 @@ class Experience(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return (
-            f"<Experience id={self.experience_id} score={self.score:.3f} "
+            f"<Experience id={self.experience_id} "
             f"created={self.created_time!r}>"
         )

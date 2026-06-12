@@ -94,11 +94,8 @@ def add_experience(req: AddExperienceRequest) -> AddExperienceResponse:
     if eid is None:
         raise HTTPException(status_code=500, detail="failed to persist experience")
 
-    # 回读 score
-    row = _repo.get_by_id(eid)
-    score = float(row.get("score", 0.0)) if row else 0.0
-    _log("info", "experience added", {"experience_id": eid, "score": score})
-    return AddExperienceResponse(experience_id=eid, score=score)
+    _log("info", "experience added", {"experience_id": eid})
+    return AddExperienceResponse(experience_id=eid)
 
 
 # ---------------------------------------------------------------------- #
@@ -166,9 +163,20 @@ def get_statistics(
         )
     return StatisticsResponse(
         count=int(stats.get("count", 0)),
-        avg_pdr=stats.get("avg_pdr"),
-        avg_delay=stats.get("avg_delay"),
-        avg_score=stats.get("avg_score"),
         parameter_distribution=stats.get("parameter_distribution", {}),
         scene_distribution=stats.get("scene_distribution", {}),
     )
+
+
+# ---------------------------------------------------------------------- #
+# POST /experience/admin/rebuild
+# ---------------------------------------------------------------------- #
+
+
+@router.post("/admin/rebuild")
+def admin_rebuild() -> dict[str, Any]:
+    """从 MySQL 重建 FAISS 索引（用于迁移 / 修复）。"""
+    _disabled_guard()
+    restored = _repo.rebuild_from_mysql()
+    _log("info", "faiss rebuilt from mysql", {"restored": restored})
+    return {"restored": int(restored)}

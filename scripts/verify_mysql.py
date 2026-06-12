@@ -51,8 +51,8 @@ def main() -> int:
             print("[verify] latest 5 rows (key columns):")
             for r in last_five:
                 print(
-                    f"  id={r.id} task_id={r.task_id!r} device_id={r.device_id!r} "
-                    f"sim_t={r.simulation_time} m_speed={r.m_speed} "
+                    f"  id={r.id} "
+                    f"m_speed={r.m_speed} "
                     f"nb_rs_mean={r.nb_relative_speed_mean} res_pdr={r.res_avg_pdr}"
                 )
 

@@ -120,12 +120,11 @@ def _make_parameter(idx: int) -> dict:
     }
 
 
-def _make_result(pdr: float, delay: float, energy: float) -> dict:
+def _make_result(pdr: float, delay: float, energy: float) -> dict:  # noqa: ARG001
     return {
         "e2e_pdr": pdr,
         "e2e_delay": delay,
         "routing_overhead": 10.0,
-        "energy_consumption": energy,
     }
 
 
@@ -135,9 +134,13 @@ def test_add_then_search_roundtrip() -> None:
     repo = ExperienceRepository()
     # 添加 5 条不同 scene
     eids: list[int] = []
+    base = [5.0, 80.0, 2, 4, 120.0, 0.6, 50.0, 5.0, 100.0, 12.0, 60.0,
+            1.2, 0.3, 30.0, 4.0, 4.5, 1.0, 2.0, 0.5, 4, 75.0, 5.0, 60.0]
     for i in range(5):
+        vec = list(base)
+        vec[0] = 5.0 + i  # 改变 speed 让 scene 略不同
         eid = repo.add(
-            scene=_make_scene([5.0 + i, 80.0, 2, 4, 120.0, 0.6, 50.0, 1.2, 0.5, 30.0, 0.2]),
+            scene=_make_scene(vec),
             parameter=_make_parameter(i),
             result=_make_result(0.9, 150.0, 8.0),
         )
@@ -145,11 +148,13 @@ def test_add_then_search_roundtrip() -> None:
         eids.append(eid)
 
     # 检索：用一个相似 scene（与第 0 条最接近）
-    hits = repo.search(_make_scene([5.1, 80.0, 2, 4, 120.0, 0.6, 50.0, 1.2, 0.5, 30.0, 0.2]), k=3)
+    query_vec = list(base)
+    query_vec[0] = 5.1
+    hits = repo.search(_make_scene(query_vec), k=3)
     assert len(hits) > 0
-    # 按 score DESC 排序
-    scores = [h["score"] for h in hits]
-    assert scores == sorted(scores, reverse=True)
+    # 按 L2 距离 ASC 排序
+    distances = [h["distance"] for h in hits if h["distance"] is not None]
+    assert distances == sorted(distances)
     # 至少返回 1 条
     assert len(hits) <= 3
 
@@ -159,7 +164,7 @@ def test_get_by_id_roundtrip() -> None:
 
     repo = ExperienceRepository()
     eid = repo.add(
-        scene=_make_scene([1.0] * 11),
+        scene=_make_scene([1.0] * 23),
         parameter=_make_parameter(0),
         result=_make_result(0.95, 100.0, 5.0),
     )
@@ -167,7 +172,6 @@ def test_get_by_id_roundtrip() -> None:
     row = repo.get_by_id(eid)
     assert row is not None
     assert row["experience_id"] == eid
-    assert row["score"] > 0
     assert "hello_interval" in row["parameter"]
 
 
@@ -183,7 +187,7 @@ def test_delete_by_id() -> None:
 
     repo = ExperienceRepository()
     eid = repo.add(
-        scene=_make_scene([1.0] * 11),
+        scene=_make_scene([1.0] * 23),
         parameter=_make_parameter(0),
         result=_make_result(0.9, 100.0, 5.0),
     )
@@ -204,7 +208,7 @@ def test_count_and_list_paginated() -> None:
     repo = ExperienceRepository()
     for i in range(3):
         repo.add(
-            scene=_make_scene([1.0 + i] * 11),
+            scene=_make_scene([1.0 + i] * 23),
             parameter=_make_parameter(i),
             result=_make_result(0.8, 200.0, 10.0),
         )
@@ -217,28 +221,6 @@ def test_count_and_list_paginated() -> None:
     assert ids == sorted(ids, reverse=True)
 
 
-def test_list_paginated_min_score_filter() -> None:
-    from experience.repository import ExperienceRepository
-
-    repo = ExperienceRepository()
-    # 高分
-    repo.add(
-        scene=_make_scene([1.0] * 11),
-        parameter=_make_parameter(0),
-        result=_make_result(0.99, 10.0, 1.0),  # score 高
-    )
-    # 低分
-    repo.add(
-        scene=_make_scene([2.0] * 11),
-        parameter=_make_parameter(0),
-        result=_make_result(0.0, 999.0, 99.0),  # score 低
-    )
-    rows = repo.list_paginated(offset=0, limit=10, min_score=0.5)
-    # 应该只返 1 条
-    assert len(rows) == 1
-    assert rows[0]["score"] >= 0.5
-
-
 def test_topk_clamped_to_ntotal() -> None:
     """k > ntotal 时不应抛，应返回所有。"""
     from experience.repository import ExperienceRepository
@@ -246,11 +228,11 @@ def test_topk_clamped_to_ntotal() -> None:
     repo = ExperienceRepository()
     for i in range(2):
         repo.add(
-            scene=_make_scene([float(i)] * 11),
+            scene=_make_scene([float(i)] * 23),
             parameter=_make_parameter(i),
             result=_make_result(0.9, 100.0, 5.0),
         )
-    hits = repo.search(_make_scene([1.0] * 11), k=100)
+    hits = repo.search(_make_scene([1.0] * 23), k=100)
     assert len(hits) == 2
 
 
@@ -258,7 +240,7 @@ def test_search_empty_index_returns_empty() -> None:
     from experience.repository import ExperienceRepository
 
     repo = ExperienceRepository()
-    hits = repo.search(_make_scene([1.0] * 11), k=5)
+    hits = repo.search(_make_scene([1.0] * 23), k=5)
     assert hits == []
 
 
@@ -270,7 +252,7 @@ def test_dual_write_rollback_on_faiss_failure(monkeypatch: pytest.MonkeyPatch) -
     # 先 add 一次以触发 manager 初始化
     repo = ExperienceRepository()
     repo.add(
-        scene=_make_scene([1.0] * 11),
+        scene=_make_scene([1.0] * 23),
         parameter=_make_parameter(0),
         result=_make_result(0.9, 100.0, 5.0),
     )
@@ -283,7 +265,7 @@ def test_dual_write_rollback_on_faiss_failure(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(FaissIndexManager, "add_vector", _boom)
 
     eid = repo.add(
-        scene=_make_scene([2.0] * 11),
+        scene=_make_scene([2.0] * 23),
         parameter=_make_parameter(1),
         result=_make_result(0.9, 100.0, 5.0),
     )
@@ -302,9 +284,6 @@ def test_disabled_config_blocks_writes(monkeypatch: pytest.MonkeyPatch) -> None:
         dimension=cfg.dimension,
         faiss_index_path=cfg.faiss_index_path,
         faiss_id_map_path=cfg.faiss_id_map_path,
-        max_delay_ms=cfg.max_delay_ms,
-        max_energy=cfg.max_energy,
-        score_weights=cfg.score_weights,
         topk_default=cfg.topk_default,
         topk_max=cfg.topk_max,
         disabled=True,
@@ -313,7 +292,7 @@ def test_disabled_config_blocks_writes(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     repo = ExperienceRepository(config=cfg_disabled)
     eid = repo.add(
-        scene=_make_scene([1.0] * 11),
+        scene=_make_scene([1.0] * 23),
         parameter=_make_parameter(0),
         result=_make_result(0.9, 100.0, 5.0),
     )
@@ -329,33 +308,30 @@ def test_payload_to_experience_e2e() -> None:
 
     payload = {
         "type": "simulation",
-        "task_id": "task1",
-        "nodes": [
-            {
-                "id": 0,
-                "scene_info": {
-                    "m_info": {
-                        "speed": 3.0, "energy": 70.0, "queue_length": 1,
-                        "neighbor_count": 3, "distance_to_destination": 100.0,
-                    },
-                    "neighbor_info": {
-                        "forward_candidate_ratio": 0.5,
-                        "distance_to_me_mean": 40.0,
-                        "relative_speed_mean": 1.0,
-                        "link_lifetime_mean": 20.0,
-                        "queue_length_mean": 1.0,
-                    },
-                },
-                "para_info": {
-                    "hello_interval": 1.0, "path_num": 1,
-                    "weights": {"w_distance": 0.4, "w_linkTime": 0.3, "w_energy": 0.2, "w_queue": 0.1},
-                },
-                "result_info": {
-                    "e2e_pdr": 0.85, "e2e_delay": 120.0,
-                    "routing_overhead": 8.0, "energy_consumption": 6.0,
-                },
-            }
-        ],
+        "speed": 3.0, "energy": 70.0, "queue_length": 1,
+        "neighbor_count": 3, "distance_to_destination": 100.0,
+        "forward_candidate_ratio": 0.5,
+        "distance_to_me_mean": 40.0,
+        "distance_to_me_std": 4.0,
+        "distance_to_destination_mean": 90.0,
+        "distance_to_destination_std": 10.0,
+        "distance_to_destination_min": 50.0,
+        "relative_speed_mean": 1.0,
+        "relative_speed_std": 0.2,
+        "link_lifetime_mean": 20.0,
+        "link_lifetime_std": 3.0,
+        "neighbor_degree_mean": 3.5,
+        "neighbor_degree_std": 0.8,
+        "queue_length_mean": 1.0,
+        "queue_length_std": 0.2,
+        "queue_length_max": 2,
+        "energy_mean": 65.0,
+        "energy_std": 4.0,
+        "energy_min": 50.0,
+        "hello_interval": 1.0, "path_num": 1,
+        "w_distance": 0.4, "w_linkTime": 0.3,
+        "w_relVelocity": 0.2, "w_neighborCount": 0.1,
+        "avg_pdr": 0.85, "avg_delay": 120.0,
     }
     mapped = payload_to_experience(payload)
     assert mapped is not None

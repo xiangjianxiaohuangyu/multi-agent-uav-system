@@ -25,24 +25,12 @@ def is_experience_disabled() -> bool:
 
 
 @dataclass(frozen=True)
-class ScoreWeights:
-    """经验评分的三个分量权重。和应当为 1.0（不强制，启动时仅打 WARNING）。"""
-
-    pdr: float = 0.5
-    delay: float = 0.3
-    energy: float = 0.2
-
-
-@dataclass(frozen=True)
 class ExperienceConfig:
     """经验库全局配置。"""
 
-    dimension: int = 11
+    dimension: int = 23
     faiss_index_path: Path = field(default_factory=lambda: Path("./data/faiss/index.faiss"))
     faiss_id_map_path: Path = field(default_factory=lambda: Path("./data/faiss/id_map.json"))
-    max_delay_ms: float = 1000.0
-    max_energy: float = 100.0
-    score_weights: ScoreWeights = field(default_factory=ScoreWeights)
     topk_default: int = 5
     topk_max: int = 50
     disabled: bool = False
@@ -121,19 +109,6 @@ def _merge_from_dict(cfg: ExperienceConfig, raw: dict[str, Any]) -> ExperienceCo
     if "faiss_id_map_path" in raw:
         updates["faiss_id_map_path"] = Path(str(raw["faiss_id_map_path"]))
 
-    if "max_delay_ms" in raw:
-        updates["max_delay_ms"] = float(raw["max_delay_ms"])
-    if "max_energy" in raw:
-        updates["max_energy"] = float(raw["max_energy"])
-
-    if "score_weights" in raw and isinstance(raw["score_weights"], dict):
-        sw_raw = raw["score_weights"]
-        updates["score_weights"] = ScoreWeights(
-            pdr=float(sw_raw.get("pdr", cfg.score_weights.pdr)),
-            delay=float(sw_raw.get("delay", cfg.score_weights.delay)),
-            energy=float(sw_raw.get("energy", cfg.score_weights.energy)),
-        )
-
     if "topk_default" in raw:
         updates["topk_default"] = int(raw["topk_default"])
     if "topk_max" in raw:
@@ -158,17 +133,6 @@ def _apply_env_overrides(cfg: ExperienceConfig) -> ExperienceConfig:
         updates["faiss_index_path"] = d / "index.faiss"
         updates["faiss_id_map_path"] = d / "id_map.json"
 
-    if "EXPERIENCE_MAX_DELAY_MS" in os.environ:
-        try:
-            updates["max_delay_ms"] = float(os.environ["EXPERIENCE_MAX_DELAY_MS"])
-        except ValueError:
-            pass
-    if "EXPERIENCE_MAX_ENERGY" in os.environ:
-        try:
-            updates["max_energy"] = float(os.environ["EXPERIENCE_MAX_ENERGY"])
-        except ValueError:
-            pass
-
     if "EXPERIENCE_TOPK_DEFAULT" in os.environ:
         try:
             updates["topk_default"] = int(os.environ["EXPERIENCE_TOPK_DEFAULT"])
@@ -189,21 +153,12 @@ def _apply_env_overrides(cfg: ExperienceConfig) -> ExperienceConfig:
 def _validate(cfg: ExperienceConfig) -> ExperienceConfig:
     """配置合理性检查；不合法时打 WARNING 并修正。"""
     if cfg.dimension <= 0:
-        log.warning("invalid dimension %s, fallback to 11", cfg.dimension)
-        return replace(cfg, dimension=11)
-    if cfg.max_delay_ms <= 0:
-        log.warning("invalid max_delay_ms %s, fallback to 1000.0", cfg.max_delay_ms)
-        return replace(cfg, max_delay_ms=1000.0)
-    if cfg.max_energy <= 0:
-        log.warning("invalid max_energy %s, fallback to 100.0", cfg.max_energy)
-        return replace(cfg, max_energy=100.0)
+        log.warning("invalid dimension %s, fallback to 23", cfg.dimension)
+        return replace(cfg, dimension=23)
     if cfg.topk_default < 1:
         log.warning("invalid topk_default %s, fallback to 5", cfg.topk_default)
         return replace(cfg, topk_default=5)
     if cfg.topk_max < cfg.topk_default:
         log.warning("topk_max < topk_default, adjusting")
         return replace(cfg, topk_max=cfg.topk_default)
-    weights_sum = cfg.score_weights.pdr + cfg.score_weights.delay + cfg.score_weights.energy
-    if abs(weights_sum - 1.0) > 1e-6:
-        log.warning("score_weights sum to %s, expected 1.0 (informational only)", weights_sum)
     return cfg

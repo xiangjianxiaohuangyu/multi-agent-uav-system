@@ -1,9 +1,9 @@
 """经验库统计与 CSV 导出。
 
 实现：
-- 数量、平均 PDR / Delay / Score
+- 数量、平均 PDR / Delay
 - 参数分布（6 字段各自打 4 桶）
-- 场景分布（关键 4 字段：speed / energy / neighbor_count / traffic_load）
+- 场景分布（关键字段：speed / energy / neighbor_count / link_lifetime_mean）
 - CSV 导出（两段：SUMMARY + EXPERIENCES）
 """
 
@@ -26,7 +26,7 @@ SCENE_KEY_FIELDS: tuple[str, ...] = (
     "speed",
     "energy",
     "neighbor_count",
-    "traffic_load",
+    "link_lifetime_mean",
 )
 
 
@@ -88,14 +88,11 @@ def compute_statistics(
         offset += page_size
 
     count = len(all_rows)
-    pdr_vals = [float(r.get("result", {}).get("e2e_pdr", 0.0)) for r in all_rows]
-    delay_vals = [float(r.get("result", {}).get("e2e_delay", 0.0)) for r in all_rows]
-    score_vals = [float(r.get("score", 0.0)) for r in all_rows]
+    pdr_vals = [float(r.get("result", {}).get("avg_pdr", 0.0)) for r in all_rows]
+    delay_vals = [float(r.get("result", {}).get("avg_delay", 0.0)) for r in all_rows]
 
-    # 桶分位数（基于当前数据）
     pdr_edges = _quartiles(pdr_vals) if pdr_vals else [0.0, 0.0, 0.0]
     delay_edges = _quartiles(delay_vals) if delay_vals else [0.0, 0.0, 0.0]
-    score_edges = _quartiles(score_vals) if score_vals else [0.0, 0.0, 0.0]
 
     # 参数分布
     param_dist: dict[str, dict[str, int]] = {}
@@ -133,11 +130,9 @@ def compute_statistics(
         "count": count,
         "avg_pdr": _safe_mean(pdr_vals),
         "avg_delay": _safe_mean(delay_vals),
-        "avg_score": _safe_mean(score_vals),
         "quartiles": {
             "pdr": pdr_edges,
             "delay": delay_edges,
-            "score": score_edges,
         },
         "parameter_distribution": param_dist,
         "scene_distribution": scene_dist,
@@ -163,12 +158,10 @@ def to_csv(
     writer.writerow(["count", stats.get("count", 0)])
     writer.writerow(["avg_pdr", stats.get("avg_pdr", "")])
     writer.writerow(["avg_delay", stats.get("avg_delay", "")])
-    writer.writerow(["avg_score", stats.get("avg_score", "")])
 
     q = stats.get("quartiles", {})
     writer.writerow(["pdr_q1_q2_q3", q.get("pdr", [])])
     writer.writerow(["delay_q1_q2_q3", q.get("delay", [])])
-    writer.writerow(["score_q1_q2_q3", q.get("score", [])])
 
     pd = stats.get("parameter_distribution", {})
     for fld, buckets in pd.items():
@@ -184,29 +177,12 @@ def to_csv(
     writer.writerow(
         [
             "experience_id",
-            "score",
+            "distance",
             "created_time",
-            "scene.speed",
-            "scene.energy",
-            "scene.queue_length",
-            "scene.neighbor_count",
-            "scene.distance_to_destination",
-            "scene.forward_candidate_ratio",
-            "scene.avg_neighbor_distance",
-            "scene.relative_speed_mean",
-            "scene.link_stability",
-            "scene.link_lifetime_mean",
-            "scene.traffic_load",
-            "parameter.hello_interval",
-            "parameter.candidate_num",
-            "parameter.w_distance",
-            "parameter.w_linktime",
-            "parameter.w_energy",
-            "parameter.w_queue",
-            "result.e2e_pdr",
-            "result.e2e_delay",
-            "result.routing_overhead",
-            "result.energy_consumption",
+            *[f"scene.{k}" for k in SCENE_FIELD_ORDER],
+            *[f"parameter.{k}" for k in PARAM_FIELDS],
+            "result.avg_pdr",
+            "result.avg_delay",
         ]
     )
     for r in rows:
@@ -216,14 +192,12 @@ def to_csv(
         writer.writerow(
             [
                 r.get("experience_id", ""),
-                r.get("score", ""),
+                r.get("distance", ""),
                 r.get("created_time", ""),
                 *[scene.get(k, "") for k in SCENE_FIELD_ORDER],
                 *[param.get(k, "") for k in PARAM_FIELDS],
-                res.get("e2e_pdr", ""),
-                res.get("e2e_delay", ""),
-                res.get("routing_overhead", ""),
-                res.get("energy_consumption", ""),
+                res.get("avg_pdr", ""),
+                res.get("avg_delay", ""),
             ]
         )
 

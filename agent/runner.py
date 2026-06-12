@@ -56,7 +56,13 @@ async def process_with_agent(
             llm_config=config,
         )
         try:
-            result = await agent.process(sim_data, prior_experiences=prior_experiences)
+            # 把 NS3 原始扁平 payload 一并传入，让 LLM 看到完整 23 字段指标
+            # （speed / neighbor_stats / performance 等），而不是只看 NodeInfo 的 4 字段
+            result = await agent.process(
+                sim_data,
+                prior_experiences=prior_experiences,
+                raw_data=data,
+            )
         finally:
             await agent.close()
         return result
